@@ -332,19 +332,16 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
-    int is_fg_running = 1;
 
-    while(is_fg_running)
-    {
-        pid_t current_fg_pid = fgpid(jobs);
-        struct job_t * current_fg = getjobpid(jobs,current_fg_pid);
-        
-        if(current_fg->state == 0)
-        {
-            is_fg_running = 0;
-            deletejob(jobs,current_fg_pid);
-        }
-    }
+    pid_t current_fg_pid = fgpid(jobs);
+    struct job_t * current_fg = getjobpid(jobs,current_fg_pid);
+    sigset_t mask;
+    Sigemptyset(&mask);
+    Sigaddset(&mask,SIGINT);
+
+    while(current_fg->pid > 0)
+        sigsuspend(&mask)
+    
     return;
 }
 
@@ -371,6 +368,20 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+    int olderrno = errno;
+    sigset_t mask_all, prev_all;
+    
+    Sigfillset(&mask_all);
+
+    Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+    pid_t fg_pid = fgpid(jobs)
+
+    Kill(fg_pid,SIGINT);
+    deletejob(jobs,fg_pid);
+
+    Sigprocmask(SIG_SETMASK, &prev_all,NULL);
+
+    errno = olderrno;
     return;
 }
 
