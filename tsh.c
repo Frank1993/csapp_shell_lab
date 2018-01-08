@@ -174,21 +174,38 @@ void eval(char *cmdline)
         return;
 
     pid_t pid = Fork();
+
+    sigset_t mask_all, mask_one,prev_all,prev_one;
+    sigfillset(&mask_all);
+
+    sigemptyset(&mask_one);
+    sigaddset(&mask_one, SIGCHLD);
+    sigaddset(&mask_one, SIGINT);
+
+    sigprocmask(SIG_BLOCK, &mask_one,&prev_one);
     if(pid == 0)
     {
+        sigprocmask(SIG_SETMASK,&prev_one,NULL);
+
         if(execve(argv[0],argv,environ) < 0)
         {
             app_error("Command Not Found");
         }
     }
 
-    if (is_bg)
+    int bg_fg = FG;
+    if(is_bg)
+        bg_fg = BG;
+
+    
+    sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+    addjob(jobs,pid,bg_fg,cmdline);
+    sigprocmask(SIG_SETMASK, &prev_all, NULL);
+
+    sigprocmask(SIG_SETMASK,&prev_one,NULL);
+    
+    if(!is_bg)
     {
-        addjob(jobs,pid,BG,cmdline);
-    }
-    else
-    {
-        addjob(jobs,pid,FG,cmdline);
         waitfg(pid);
     }
     return;
@@ -306,21 +323,21 @@ void do_bgfg(char **argv)
     {
         if (strcmp(argv[0],bg_str) == 0)
         {
-            if (current_job->state == 3)
+            if (current_job->state == ST)
             {
                 kill(current_job->pid,SIGCONT);
-                current_job->state = 2;
+                current_job->state = BG;
             }
         }
         else 
         {
-            if (current_job->state ==3)
+            if (current_job->state ==ST)
             {
                 kill(current_job->pid,SIGCONT);
-                current_job->state = 1;
+                current_job->state = FG;
             }
-            else if (current_job->state == 2)
-                current_job->state = 1;
+            else if (current_job->state == BG)
+                current_job->state = FG;
             waitfg(current_job->pid);
         }
     }
@@ -337,7 +354,7 @@ void waitfg(pid_t pid)
     struct job_t * current_fg = getjobpid(jobs,current_fg_pid);
     sigset_t mask;
     sigemptyset(&mask);
-    sigaddset(&mask,SIGINT);
+    //sigaddset(&mask,SIGINT);
 
     while(current_fg->pid > 0)
         sigsuspend(&mask);
@@ -358,6 +375,35 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+    int olderrno = errno;
+
+    pid_t pid;
+
+    sigset_t mask_all, prev_all;
+    sigfillset(&mask_all);
+
+    int status;
+
+    while( (pid = waitpid(-1,&status, WNOHANG | WUNTRACED)) >0 )
+    {
+        // judge it's terminated or stopped
+        if (WIFEXITED(status)) // is terminated
+        {
+            sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+            deletejob(jobs,pid);
+            sigprocmask(SIG_SETMASK, &prev_all, NULL);
+        }
+        else if (WIFSTOPPED(status))
+        {
+            sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+            struct job_t * current_job = getjobpid(jobs,pid);
+            if (current_job)
+                current_job->state = ST;
+            sigprocmask(SIG_SETMASK, &prev_all, NULL);
+        }
+    }
+
+    errno = olderrno;
     return;
 }
 
